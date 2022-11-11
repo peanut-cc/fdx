@@ -1,17 +1,18 @@
-use std::{path::PathBuf, sync::{mpsc::{channel, Receiver, RecvTimeoutError, Sender}, Arc, atomic::{AtomicBool, Ordering}}, time::{Instant, Duration}, io::{Write, self}, mem, thread};
+use std::{path::PathBuf, sync::{mpsc::{channel, Receiver, RecvTimeoutError, Sender}, Arc, atomic::{AtomicBool, Ordering}}, time::{Instant, Duration}, io::{Write, self}, mem, thread, ffi::OsStr, borrow::Cow};
 
 use ignore::{overrides::OverrideBuilder, WalkBuilder};
 use anyhow::{anyhow, Result};
+use regex::bytes::Regex;
 
 
-use crate::{exit_codes::ExitCode, dir_entry::DirEntry, error::print_error, output};
+use crate::{exit_codes::ExitCode, dir_entry::DirEntry, error::print_error, output, filesystem};
 
 /// Default duration until output buffering switches to streaming.
 pub const DEFAULT_MAX_BUFFER_TIME: Duration = Duration::from_millis(100);
 /// Maximum size of the output buffer before flushing results to the console
 pub const MAX_BUFFER_LENGTH: usize = 1000;
 
-pub fn scan(path_vec: &[PathBuf]) -> Result<ExitCode> {
+pub fn scan(path_vec: &[PathBuf], pattern: Arc<Regex>) -> Result<ExitCode> {
     let mut path_iter = path_vec.iter();
     let first_path_buf = path_iter
         .next()
@@ -43,7 +44,7 @@ pub fn scan(path_vec: &[PathBuf]) -> Result<ExitCode> {
     let receiver_thread = spawn_receiver(&quit_flag, &interrupt_flag, rx);
 
     // Spawn the sender threads.
-    spawn_senders(&quit_flag, parallel_walker, tx);
+    spawn_senders(&quit_flag,  pattern, parallel_walker, tx);
 
     // Wait for the receiver thread to print out all results.
     let exit_code = receiver_thread.join().unwrap();
@@ -250,13 +251,13 @@ fn spawn_receiver(
 fn spawn_senders(
     // config: &Arc<Config>,
     quit_flag: &Arc<AtomicBool>,
-    // pattern: Arc<Regex>,
+    pattern: Arc<Regex>,
     parallel_walker: ignore::WalkParallel,
     tx: Sender<WorkerResult>,
 )  {
     parallel_walker.run(|| {
         // let config = Arc::clone(config);
-        // let pattern = Arc::clone(&pattern);
+        let pattern = Arc::clone(&pattern);
         let tx_thread = tx.clone();
         let quit_flag = Arc::clone(quit_flag);
         Box::new(move | entry_o| {
@@ -274,6 +275,17 @@ fn spawn_senders(
                 }
             };
             let entry_path = entry.path();
+            let search_str: Cow<OsStr> =  match entry_path.file_name() {
+                Some(filename) => Cow::Borrowed(filename),
+                None => unreachable!(
+                    "Encountered file system entry without a file name. This should only \
+                     happen for paths like 'foo/bar/..' or '/' which are not supposed to \
+                     appear in a file system traversal."
+                ),
+            };
+            if !pattern.is_match(&filesystem::osstr_to_bytes(search_str.as_ref())) {
+                return ignore::WalkState::Continue;
+            }
             let send_result = tx_thread.send(WorkerResult::Entry(entry));
             if send_result.is_err() {
                 return ignore::WalkState::Quit;

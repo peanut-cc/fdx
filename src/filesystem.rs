@@ -1,4 +1,6 @@
 use std::{path::{Path, PathBuf}, io, env};
+use std::ffi::OsStr;
+use std::borrow::Cow;
 
 use normpath::PathExt;
 
@@ -38,4 +40,10 @@ pub fn absolute_path(path: &Path) -> io::Result<PathBuf> {
 /// Remove the `./` prefix from a path.
 pub fn strip_current_dir(path: &Path) -> &Path {
     path.strip_prefix(".").unwrap_or(path)
+}
+
+#[cfg(any(unix, target_os = "redox"))]
+pub fn osstr_to_bytes(input: &OsStr) -> Cow<[u8]> {
+    use std::os::unix::ffi::OsStrExt;
+    Cow::Borrowed(input.as_bytes())
 }

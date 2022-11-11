@@ -1,9 +1,11 @@
-use std::{env, path::{Path, PathBuf}};
+use std::{env, path::{Path, PathBuf}, sync::Arc};
 
 use anyhow::{Result,anyhow, Context};
 use error::print_error;
 use exit_codes::ExitCode;
+use globset::GlobBuilder;
 use normpath::PathExt;
+use regex::bytes::RegexBuilder;
 mod dir_entry;
 
 mod app;
@@ -30,10 +32,14 @@ fn main() {
 fn run() -> Result<ExitCode> {
     let matches = app::build_app().get_matches_from(env::args_os());
     set_working_dir(&matches);
-    // let pattern = extract_search_pattern(&matches)?;
+    let pattern = extract_search_pattern(&matches)?;
+    println!("{}", pattern);
+    // ensure_search_pattern_is_not_a_path(&matches, pattern)?;
+    let pattern_regex = build_pattern_regex(&matches, pattern)?;
+    let re = build_regex(pattern_regex)?;
     let search_paths = extract_search_paths(&matches)?;
     println!("{:?}", search_paths);
-    walk::scan(&search_paths)
+    walk::scan(&search_paths, Arc::new(re))
 }
 
 fn set_working_dir(matches: &clap::ArgMatches) -> Result<()> {
@@ -117,4 +123,49 @@ fn ensure_current_directory_exists(current_directory: &Path) -> Result<()> {
             "Could not retrieve current directory (has it been deleted?)."
         ))
     }
+}
+
+/// Detect if the user accidentally supplied a path instead of a search pattern
+fn ensure_search_pattern_is_not_a_path(matches: &clap::ArgMatches, pattern: &str) -> Result<()> {
+    if !matches.is_present("full-path")
+        && pattern.contains(std::path::MAIN_SEPARATOR)
+        && Path::new(pattern).is_dir()
+    {
+        Err(anyhow!(
+            "The search pattern '{pattern}' contains a path-separation character ('{sep}') \
+             and will not lead to any search results.\n\n\
+             If you want to search for all files inside the '{pattern}' directory, use a match-all pattern:\n\n  \
+             fd . '{pattern}'\n\n\
+             Instead, if you want your pattern to match the full file path, use:\n\n  \
+             fd --full-path '{pattern}'",
+            pattern = pattern,
+            sep = std::path::MAIN_SEPARATOR,
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn build_pattern_regex(matches: &clap::ArgMatches, pattern: &str) -> Result<String> {
+    Ok(if matches.is_present("glob") && !pattern.is_empty() {
+        let glob = GlobBuilder::new(pattern).literal_separator(true).build()?;
+        glob.regex().to_owned()
+    } else {
+        String::from(pattern)
+    })
+}
+
+fn build_regex(pattern_regex: String) -> Result<regex::bytes::Regex> {
+    RegexBuilder::new(&pattern_regex)
+        .case_insensitive(false)
+        .dot_matches_new_line(true)
+        .build()
+        .map_err(|e| {
+            anyhow!(
+                "{}\n\nNote: You can use the '--fixed-strings' option to search for a \
+                 literal string instead of a regular expression. Alternatively, you can \
+                 also use the '--glob' option to match on a glob pattern.",
+                e.to_string()
+            )
+        })
 }

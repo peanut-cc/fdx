@@ -39,6 +39,17 @@ pub fn build_app() -> Command<'static> {
                 ),
         )
         .arg(
+            Arg::new("pattern")
+            .allow_invalid_utf8(true)
+            .help(
+                "the search pattern (a regular expression, unless '--glob' is used; optional)",
+            ).long_help(
+                "the search pattern which is either a regular expression (default) or a glob \
+                 pattern (if --glob is used). If no pattern has been specified, every entry \
+                 is considered a match. If your pattern starts with a dash (-), make sure to \
+                 pass '--' first, or it will be considered as a flag (fd -- '-foo').")
+        )
+        .arg(
             Arg::new("path")
                 // .multiple_occurrences(true)
                 .allow_invalid_utf8(true)
@@ -64,17 +75,6 @@ pub fn build_app() -> Command<'static> {
                          <path> argument or the '--search-path' option will also be resolved \
                          relative to this directory.",
                 ),
-        )
-        .arg(
-            Arg::new("pattern")
-            .allow_invalid_utf8(true)
-            .help(
-                "the search pattern (a regular expression, unless '--glob' is used; optional)",
-            ).long_help(
-                "the search pattern which is either a regular expression (default) or a glob \
-                 pattern (if --glob is used). If no pattern has been specified, every entry \
-                 is considered a match. If your pattern starts with a dash (-), make sure to \
-                 pass '--' first, or it will be considered as a flag (fd -- '-foo').")
         );
     app
 }
